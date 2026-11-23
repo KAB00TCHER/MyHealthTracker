@@ -73,36 +73,60 @@ export default async function handler(req, res) {
   try {
     const db = auth.supabase;
 
-    if (req.method === "GET") {
-      const { data: medications, error } = await db
-        .from("medications")
-        .select("*")
-        .eq("telegram_id", auth.id)
-        .order("created_at", { ascending: false });
+  
+if (req.method === "GET") {
+  const { data: medications, error } = await db
+    .from("medications")
+    .select("*")
+    .eq("telegram_id", auth.id)
+    .order("created_at", { ascending: false });
 
-      if (error) throw error;
+  if (error) throw error;
 
-      const { data: logs, error: logsError } = await db
-        .from("medication_logs")
-        .select("id,medication_id,scheduled_for,status,reminder_sent_at,snoozed_until,acted_at")
-        .eq("telegram_id", auth.id)
-        .order("scheduled_for", { ascending: false })
-        .limit(100);
+  const preparedMedications = (medications || []).map(m => ({
+    id: m.id,
+    ...decryptJson(m.details_encrypted),
+    times: m.schedule_times,
+    timezone: m.timezone,
+    active: m.active
+  }));
 
-      if (logsError) throw logsError;
+  const medicationMap = new Map(
+    preparedMedications.map(m => [
+      m.id,
+      {
+        name: m.name,
+        timezone: m.timezone
+      }
+    ])
+  );
 
-      return res.status(200).json({
-        ok: true,
-        medications: (medications || []).map(m => ({
-          id: m.id,
-          ...decryptJson(m.details_encrypted),
-          times: m.schedule_times,
-          timezone: m.timezone,
-          active: m.active
-        })),
-        logs: logs || []
-      });
-    }
+  const { data: logs, error: logsError } = await db
+    .from("medication_logs")
+    .select("id,medication_id,scheduled_for,status,reminder_sent_at,snoozed_until,acted_at")
+    .eq("telegram_id", auth.id)
+    .order("scheduled_for", { ascending: false })
+    .limit(100);
+
+  if (logsError) throw logsError;
+
+  const preparedLogs = (logs || []).map(log => {
+    const medication = medicationMap.get(log.medication_id);
+
+    return {
+      ...log,
+      medication_name: medication?.name || "Неизвестный препарат",
+      timezone: medication?.timezone || "Europe/Moscow"
+    };
+  });
+
+  return res.status(200).json({
+    ok: true,
+    medications: preparedMedications,
+    logs: preparedLogs
+  });
+}
+
 
     if (req.method === "POST") {
       const values = validate(req.body || {});
