@@ -22,3 +22,231 @@
   flex: 1;
   min-width: 110px;
 }
+
+
+
+.med-calendar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.med-calendar-header strong {
+  text-transform: capitalize;
+  font-size: 16px;
+}
+
+.med-calendar-header button {
+  min-width: 42px;
+  padding: 9px 14px;
+  font-size: 20px;
+}
+
+.med-today-button {
+  border: 0;
+  background: transparent;
+  color: #8e6958;
+  font-weight: 700;
+  padding: 8px 0 14px;
+}
+
+.med-calendar {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.med-calendar-weekday {
+  text-align: center;
+  color: #99908a;
+  font-size: 11px;
+  padding: 8px 0;
+}
+
+.med-calendar-day {
+  min-width: 0;
+  min-height: 48px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: #f8f6f4;
+  color: #38322e;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 5px 2px;
+}
+
+.med-calendar-day.other-month {
+  opacity: .3;
+}
+
+.med-calendar-day.today {
+  border-color: #b18d7b;
+}
+
+.med-calendar-day.selected {
+  background: #e9ddd5;
+  border-color: #8e6958;
+  font-weight: 800;
+}
+
+.med-calendar-dots {
+  display: flex;
+  justify-content: center;
+  gap: 3px;
+  min-height: 6px;
+}
+
+.med-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #bbb;
+  flex-shrink: 0;
+}
+
+.med-dot.taken {
+  background: #4c9a70;
+}
+
+.med-dot.unconfirmed {
+  background: #d29a43;
+}
+
+.med-dot.skipped {
+  background: #bd625b;
+}
+
+.med-dot.waiting {
+  background: #9b9290;
+}
+
+.med-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 15px;
+  color: #837a75;
+  font-size: 11px;
+}
+
+.med-legend span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.med-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 8px 0 18px;
+}
+
+.med-stat {
+  background: #f7f5f3;
+  border-radius: 12px;
+  padding: 12px 5px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.med-stat strong {
+  font-size: 22px;
+}
+
+.med-stat span {
+  color: #837a75;
+  font-size: 11px;
+}
+
+.med-week-summary {
+  border-top: 1px solid #eee9e5;
+  margin-top: 15px;
+  padding-top: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 13px;
+}
+
+.med-week-summary span {
+  color: #837a75;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.med-log-row {
+  background: #fff;
+  border: 1px solid #eee9e5;
+  border-radius: 13px;
+  padding: 14px;
+  margin: 8px 0;
+}
+
+.med-log-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.med-log-main strong {
+  font-size: 14px;
+}
+
+.med-log-main .muted {
+  margin-top: 5px;
+  font-size: 11px;
+}
+
+.med-status {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 6px 8px;
+  border-radius: 20px;
+  background: #f0eeec;
+  color: #777;
+}
+
+.med-status.taken {
+  background: #e5f1e9;
+  color: #397c55;
+}
+
+.med-status.unconfirmed {
+  background: #f8efdf;
+  color: #9a702c;
+}
+
+.med-status.skipped {
+  background: #f5e6e4;
+  color: #a34e47;
+}
+
+@media(max-width:430px) {
+  .med-calendar {
+    gap: 3px;
+  }
+
+  .med-calendar-day {
+    min-height: 43px;
+    font-size: 12px;
+  }
+
+  .med-legend {
+    gap: 8px;
+  }
+
+  .med-log-main {
+    align-items: flex-start;
+  }
+}

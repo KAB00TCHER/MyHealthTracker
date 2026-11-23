@@ -9,6 +9,9 @@ let historyData = { entries: [], events: [] };
 let events = [];
 let medicationsData = { medications: [], logs: [] };
 
+let medicationCalendarDate = new Date();
+let medicationSelectedDate = "";
+
 
 const labels = {
   sleep_depth: "Глубина сна", sleep_quality: "Качество сна",
@@ -285,24 +288,365 @@ function printWeeklyReport() {
   w.document.open(); w.document.write(html); w.document.close();
 }
 
+
 function renderMedications() {
   const medications = medicationsData.medications || [];
   const logs = medicationsData.logs || [];
 
+  const pad = value => String(value).padStart(2, "0");
+
+  // Для общего календаря используем часовой пояс первого препарата.
+  const calendarTimezone =
+    medications[0]?.timezone || "Europe/Moscow";
+
+  function dateKeyInZone(value, timezone = calendarTimezone) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).formatToParts(new Date(value));
+
+    const get = type => parts.find(p => p.type === type)?.value;
+
+    return `${get("year")}-${get("month")}-${get("day")}`;
+  }
+
+  function dateFromKey(key) {
+    return new Date(`${key}T12:00:00`);
+  }
+
+  function monthKey(date) {
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}`;
+  }
+
+  function statusOf(log) {
+    if (log.status === "taken") return "taken";
+    if (log.status === "skipped") return "skipped";
+
+    if (
+      log.snoozed_until &&
+      new Date(log.snoozed_until).getTime() > Date.now()
+    ) {
+      return "waiting";
+    }
+
+    if (new Date(log.scheduled_for).getTime() <= Date.now()) {
+      return "unconfirmed";
+    }
+
+    return "waiting";
+  }
+
   const statusNames = {
-    pending: "Ожидает отметки",
     taken: "Принято",
-    skipped: "Пропущено"
+    skipped: "Пропущено",
+    waiting: "Ожидает",
+    unconfirmed: "Нет отметки"
   };
+
+  const statusClasses = {
+    taken: "taken",
+    skipped: "skipped",
+    waiting: "waiting",
+    unconfirmed: "unconfirmed"
+  };
+
+  const todayKey = dateKeyInZone(new Date());
+
+  if (!medicationSelectedDate) {
+    medicationSelectedDate = todayKey;
+  }
+
+  const selectedDate = dateFromKey(medicationSelectedDate);
+
+  if (
+    monthKey(medicationCalendarDate) !==
+    monthKey(selectedDate)
+  ) {
+    medicationCalendarDate = new Date(
+      selectedDate.getFullYear(),
+      selectedDate.getMonth(),
+      1,
+      12
+    );
+  }
+
+  const year = medicationCalendarDate.getFullYear();
+  const month = medicationCalendarDate.getMonth();
+  const currentMonthKey = monthKey(medicationCalendarDate);
+
+  const monthTitle = medicationCalendarDate.toLocaleDateString(
+    "ru-RU",
+    { month: "long", year: "numeric" }
+  );
+
+  const firstDay = new Date(year, month, 1, 12);
+  const offset = (firstDay.getDay() + 6) % 7;
+
+  const calendarDays = Array.from({ length: 42 }, (_, i) =>
+    new Date(year, month, 1 - offset + i, 12)
+  );
+
+  const logsForMonth = logs.filter(log =>
+    dateKeyInZone(log.scheduled_for) === currentMonthKey
+  );
+
+  const selectedLogs = logs
+    .filter(log =>
+      dateKeyInZone(log.scheduled_for) === medicationSelectedDate
+    )
+    .sort((a, b) =>
+      new Date(a.scheduled_for) - new Date(b.scheduled_for)
+    );
+
+  function countStatuses(items) {
+    const result = {
+      taken: 0,
+      skipped: 0,
+      waiting: 0,
+      unconfirmed: 0
+    };
+
+    items.forEach(log => {
+      result[statusOf(log)]++;
+    });
+
+    return result;
+  }
+
+  const monthStats = countStatuses(logsForMonth);
+
+  const selectedDateObj = dateFromKey(medicationSelectedDate);
+  const weekStart = new Date(selectedDateObj);
+  weekStart.setDate(
+    weekStart.getDate() -
+    ((weekStart.getDay() + 6) % 7)
+  );
+
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekEnd.getDate() + 6);
+
+  const weekStartKey = localDate(weekStart);
+  const weekEndKey = localDate(weekEnd);
+
+  const weekLogs = logs.filter(log => {
+    const key = dateKeyInZone(log.scheduled_for);
+    return key >= weekStartKey && key <= weekEndKey;
+  });
+
+  const weekStats = countStatuses(weekLogs);
+
+  function renderCalendarDay(date) {
+    const key = localDate(date);
+    const dayLogs = logs.filter(log =>
+      dateKeyInZone(log.scheduled_for) === key
+    );
+
+    const statuses = [...new Set(dayLogs.map(statusOf))];
+
+    const classes = [
+      "med-calendar-day",
+      date.getMonth() !== month ? "other-month" : "",
+      key === medicationSelectedDate ? "selected" : "",
+      key === todayKey ? "today" : ""
+    ].filter(Boolean).join(" ");
+
+    return `
+      <button
+        type="button"
+        class="${classes}"
+        data-med-day="${key}"
+      >
+        <span>${date.getDate()}</span>
+        <span class="med-calendar-dots">
+          ${statuses.map(status => `
+            <i class="med-dot ${statusClasses[status]}"></i>
+          `).join("")}
+        </span>
+      </button>
+    `;
+  }
+
+  function formatLogTime(log) {
+    return new Date(log.scheduled_for).toLocaleTimeString(
+      "ru-RU",
+      {
+        timeZone: log.timezone || calendarTimezone,
+        hour: "2-digit",
+        minute: "2-digit"
+      }
+    );
+  }
+
+  function renderLog(log) {
+    const status = statusOf(log);
+
+    const actualTime = log.acted_at
+      ? new Date(log.acted_at).toLocaleTimeString("ru-RU", {
+          timeZone: log.timezone || calendarTimezone,
+          hour: "2-digit",
+          minute: "2-digit"
+        })
+      : "";
+
+    return `
+      <article class="med-log-row">
+        <div class="med-log-main">
+          <div>
+            <strong>${escapeHtml(log.medication_name)}</strong>
+            <div class="muted">
+              Запланировано: ${formatLogTime(log)}
+              ${actualTime
+                ? ` · Отмечено: ${actualTime}`
+                : ""}
+            </div>
+          </div>
+
+          <span class="med-status ${statusClasses[status]}">
+            ${statusNames[status]}
+          </span>
+        </div>
+      </article>
+    `;
+  }
+
+  const selectedDateTitle = selectedDate.toLocaleDateString(
+    "ru-RU",
+    {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric"
+    }
+  );
+
+  const monthStatsHtml = `
+    <div class="med-stats">
+      <div class="med-stat">
+        <strong>${monthStats.taken}</strong>
+        <span>Принято</span>
+      </div>
+      <div class="med-stat">
+        <strong>${monthStats.unconfirmed}</strong>
+        <span>Нет отметки</span>
+      </div>
+      <div class="med-stat">
+        <strong>${monthStats.skipped}</strong>
+        <span>Пропущено</span>
+      </div>
+    </div>
+  `;
+
+  const weekStatsHtml = `
+    <div class="med-week-summary">
+      <strong>За неделю</strong>
+      <span>
+        Принято: ${weekStats.taken} ·
+        Нет отметки: ${weekStats.unconfirmed} ·
+        Пропущено: ${weekStats.skipped}
+      </span>
+    </div>
+  `;
+
+  const monthLogsForPrint = logsForMonth
+    .slice()
+    .sort((a, b) =>
+      new Date(a.scheduled_for) - new Date(b.scheduled_for)
+    );
 
   shell(`
     <div class="pagehead">
-      <h2>Лекарства</h2>
+      <h2>Дневник лекарств</h2>
       <p class="muted">
-        Настрой расписание. Бот будет присылать напоминания
-        в Telegram в указанное время.
+        История отметок о приёме препаратов.
+        Нажатие «Приняла» в Telegram фиксирует фактическое время.
       </p>
     </div>
+
+    <article class="panel">
+      <div class="med-calendar-header">
+        <button class="secondary" id="medPrevMonth" type="button">‹</button>
+        <strong>${escapeHtml(monthTitle)}</strong>
+        <button class="secondary" id="medNextMonth" type="button">›</button>
+      </div>
+
+      <button class="med-today-button" id="medToday" type="button">
+        Перейти к сегодняшнему дню
+      </button>
+
+      ${monthStatsHtml}
+
+      <div class="med-calendar">
+        ${["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+          .map(day => `<div class="med-calendar-weekday">${day}</div>`)
+          .join("")}
+
+        ${calendarDays.map(renderCalendarDay).join("")}
+      </div>
+
+      <div class="med-legend">
+        <span><i class="med-dot taken"></i> Принято</span>
+        <span><i class="med-dot unconfirmed"></i> Нет отметки</span>
+        <span><i class="med-dot skipped"></i> Пропущено</span>
+      </div>
+
+      ${weekStatsHtml}
+    </article>
+
+    <div class="pagehead">
+      <h3>${escapeHtml(selectedDateTitle)}</h3>
+      <p class="muted">Записи за выбранный день</p>
+    </div>
+
+    ${selectedLogs.length
+      ? selectedLogs.map(renderLog).join("")
+      : `<div class="notice">
+          На эту дату записей о напоминаниях нет.
+          Новые записи появляются после наступления запланированного времени.
+        </div>`
+    }
+
+    <button class="secondary full" id="printMedicationReport" type="button">
+      Печать истории за месяц · PDF
+    </button>
+
+    <div class="pagehead">
+      <h3>Мои препараты</h3>
+      <p class="muted">Настройка расписаний и напоминаний.</p>
+    </div>
+
+    ${medications.length ? medications.map(m => `
+      <article class="panel">
+        <div class="medication-head">
+          <div>
+            <h3>${escapeHtml(m.name)}</h3>
+            <p class="muted">
+              ${escapeHtml(m.instructions || "Без дополнительных инструкций")}
+            </p>
+          </div>
+          <span class="role">${m.active ? "Активно" : "Отключено"}</span>
+        </div>
+
+        <p><b>Время:</b> ${m.times.map(escapeHtml).join(", ")}</p>
+        <p class="muted">Часовой пояс: ${escapeHtml(m.timezone)}</p>
+
+        <div class="medication-actions">
+          <button class="secondary"
+            data-med-toggle="${m.id}"
+            data-active="${m.active}">
+            ${m.active ? "Отключить" : "Включить"}
+          </button>
+
+          <button class="secondary"
+            data-med-delete="${m.id}">
+            Удалить
+          </button>
+        </div>
+      </article>
+    `).join("") : `
+      <div class="notice">Пока нет добавленных лекарств.</div>
+    `}
 
     <article class="panel">
       <h3>Добавить лекарство</h3>
@@ -346,61 +690,127 @@ function renderMedications() {
       </form>
     </article>
 
-    <h3>Мои препараты</h3>
-
-    ${medications.length ? medications.map(m => `
-      <article class="panel">
-        <div class="medication-head">
-          <div>
-            <h3>${escapeHtml(m.name)}</h3>
-            <p class="muted">
-              ${escapeHtml(m.instructions || "Без дополнительных инструкций")}
-            </p>
-          </div>
-          <span class="role">${m.active ? "Активно" : "Отключено"}</span>
-        </div>
-
-        <p><b>Время:</b> ${m.times.map(escapeHtml).join(", ")}</p>
-        <p class="muted">Часовой пояс: ${escapeHtml(m.timezone)}</p>
-
-        <div class="medication-actions">
-          <button class="secondary"
-            data-med-toggle="${m.id}"
-            data-active="${m.active}">
-            ${m.active ? "Отключить" : "Включить"}
-          </button>
-
-          <button class="secondary"
-            data-med-delete="${m.id}">
-            Удалить
-          </button>
-        </div>
-      </article>
-    `).join("") : `
-      <div class="notice">
-        Пока нет добавленных лекарств.
-      </div>
-    `}
-
-    <h3>История напоминаний</h3>
-
-    ${logs.length ? logs.map(log => `
-      <article class="event">
-        <b>${statusNames[log.status] || "Неизвестно"}</b>
-        <p>${new Date(log.scheduled_for).toLocaleString("ru-RU")}</p>
-      </article>
-    `).join("") : `
-      <div class="notice">
-        История приёмов пока пуста.
-      </div>
-    `}
-
     <div class="notice">
-      Расписание служит напоминанием и не заменяет назначения врача.
-      При изменении схемы приёма обновляй расписание вручную.
+      «Нет отметки» означает, что время напоминания прошло,
+      но подтверждение приёма не поступило. Это не означает,
+      что препарат точно не был принят.
     </div>
   `);
 
+  // Переключение месяца.
+  document.querySelector("#medPrevMonth").addEventListener("click", () => {
+    medicationCalendarDate = new Date(year, month - 1, 1, 12);
+    medicationSelectedDate = localDate(medicationCalendarDate);
+    renderMedications();
+  });
+
+  document.querySelector("#medNextMonth").addEventListener("click", () => {
+    medicationCalendarDate = new Date(year, month + 1, 1, 12);
+    medicationSelectedDate = localDate(medicationCalendarDate);
+    renderMedications();
+  });
+
+  document.querySelector("#medToday").addEventListener("click", () => {
+    medicationSelectedDate = todayKey;
+    medicationCalendarDate = dateFromKey(todayKey);
+    renderMedications();
+  });
+
+  // Выбор дня календаря.
+  app.querySelectorAll("[data-med-day]").forEach(button => {
+    button.addEventListener("click", () => {
+      medicationSelectedDate = button.dataset.medDay;
+      medicationCalendarDate = dateFromKey(medicationSelectedDate);
+      renderMedications();
+    });
+  });
+
+  // Формирование PDF за выбранный месяц.
+  document.querySelector("#printMedicationReport").addEventListener(
+    "click",
+    () => {
+      const rows = monthLogsForPrint.map(log => {
+        const status = statusOf(log);
+        const date = dateKeyInZone(log.scheduled_for);
+        const time = formatLogTime(log);
+
+        const actualTime = log.acted_at
+          ? new Date(log.acted_at).toLocaleTimeString("ru-RU", {
+              timeZone: log.timezone || calendarTimezone,
+              hour: "2-digit",
+              minute: "2-digit"
+            })
+          : "—";
+
+        return `
+          <tr>
+            <td>${escapeHtml(date)}</td>
+            <td>${escapeHtml(time)}</td>
+            <td>${escapeHtml(log.medication_name)}</td>
+            <td>${escapeHtml(statusNames[status])}</td>
+            <td>${escapeHtml(actualTime)}</td>
+          </tr>
+        `;
+      }).join("");
+
+      const html = `
+        <!doctype html>
+        <html lang="ru">
+        <head>
+          <meta charset="utf-8">
+          <title>Дневник лекарств — ${escapeHtml(monthTitle)}</title>
+          <style>
+            body{font:14px Arial,sans-serif;color:#222;margin:30px;line-height:1.5}
+            h1{font-size:22px}
+            table{width:100%;border-collapse:collapse;margin-top:20px}
+            th,td{border:1px solid #ddd;padding:9px;text-align:left}
+            th{background:#f3f3f3}
+            .muted{color:#777;font-size:12px}
+            @media print{button{display:none}body{margin:12mm}}
+          </style>
+        </head>
+        <body>
+          <h1>Дневник приёма лекарств</h1>
+          <p>${escapeHtml(monthTitle)}</p>
+          <p class="muted">
+            Отчёт содержит только записи, созданные системой напоминаний
+            и отметки пользователя. Отсутствие отметки не доказывает
+            отсутствие приёма.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Дата</th>
+                <th>Время</th>
+                <th>Препарат</th>
+                <th>Статус</th>
+                <th>Отмечено</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows || `<tr><td colspan="5">Записей за месяц нет.</td></tr>`}
+            </tbody>
+          </table>
+          <p class="muted">Документ сформирован из личного дневника.</p>
+          <button onclick="window.print()">Печать / Сохранить в PDF</button>
+        </body>
+        </html>
+      `;
+
+      const w = window.open("", "_blank");
+
+      if (!w) {
+        alert("Разреши всплывающее окно для формирования PDF.");
+        return;
+      }
+
+      w.document.open();
+      w.document.write(html);
+      w.document.close();
+    }
+  );
+
+  // Добавление препарата.
   document.querySelector("#medForm").addEventListener("submit", async event => {
     event.preventDefault();
 
@@ -435,6 +845,7 @@ function renderMedications() {
     }
   });
 
+  // Включение и отключение расписания.
   app.querySelectorAll("[data-med-toggle]").forEach(button => {
     button.addEventListener("click", async () => {
       button.disabled = true;
@@ -456,6 +867,7 @@ function renderMedications() {
     });
   });
 
+  // Мягкое отключение расписания. История сохраняется.
   app.querySelectorAll("[data-med-delete]").forEach(button => {
     button.addEventListener("click", async () => {
       if (!confirm("Отключить это расписание?")) return;
