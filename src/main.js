@@ -7,6 +7,8 @@ let page = "home";
 let daily = {};
 let historyData = { entries: [], events: [] };
 let events = [];
+let medicationsData = { medications: [], logs: [] };
+
 
 const labels = {
   sleep_depth: "Глубина сна", sleep_quality: "Качество сна",
@@ -69,9 +71,14 @@ async function api(path, options = {}) {
 }
 function nav() {
   const items = [
-    ["home","Главная"],["daily","Анкета"],["events","Отметки"],["history","История"],
+    ["home","Главная"],
+    ["daily","Анкета"],
+    ["events","Отметки"],
+    ["history","История"],
+    ...(me.role === "user" ? [["medications","Лекарства"]] : []),
     ...(me.role === "admin" ? [["admin","Обзор"]] : [])
   ];
+
   return `<nav>${items.map(([id,title]) =>
     `<button class="${page === id ? "active" : ""}" data-page="${id}">${title}</button>`
   ).join("")}</nav>`;
@@ -90,6 +97,7 @@ function shell(content) {
       <section class="content">${content}</section>
       <footer>Записи помогают отслеживать самочувствие и не являются медицинским диагнозом.</footer>
     </main>`;
+  // Навигация работает и для вкладок, и для кнопок/карточек внутри страницы.
   app.querySelectorAll("[data-page]").forEach(button => {
     button.addEventListener("click", () => go(button.dataset.page));
   });
@@ -109,6 +117,10 @@ async function go(nextPage) {
       const result = await api("/api/history");
       historyData = result;
       renderHistory(nextPage === "admin");
+          } else if (nextPage === "medications") {
+      const result = await api("/api/medications");
+      medicationsData = result;
+      renderMedications();
     } else renderHome();
   } catch (error) {
     shell(`<div class="notice error">Не удалось загрузить данные: ${escapeHtml(error.message)}. Проверь настройки и обнови приложение.</div>`);
@@ -116,6 +128,7 @@ async function go(nextPage) {
 }
 function renderHome() {
   const todayEntry = historyData.entries?.find(e => e.entry_date === localDate());
+
   shell(`
     <section class="hero">
       <div class="eyebrow">СЕГОДНЯ</div>
@@ -123,11 +136,28 @@ function renderHome() {
       <p>Вечерняя анкета фиксирует общее впечатление о дне. Быстрые отметки сохраняются отдельно и имеют собственное время.</p>
       ${me.role === "user" ? `<button class="primary" data-page="daily">${todayEntry ? "Изменить анкету за сегодня" : "Заполнить анкету"}</button>` : ""}
     </section>
+
     <div class="cards">
-      ${me.role === "user" ? `<button class="tile" data-page="events"><strong>Быстрая отметка</strong><span>Записать эпизод в течение дня</span></button>` : ""}
-      <button class="tile" data-page="history"><strong>История</strong><span>Ежедневные анкеты и отдельные события</span></button>
+      ${me.role === "user" ? `
+        <button class="tile" data-page="events">
+          <strong>Быстрая отметка</strong>
+          <span>Записать эпизод в течение дня</span>
+        </button>
+
+        <button class="tile" data-page="medications">
+          <strong>Лекарства</strong>
+          <span>Расписание и напоминания о приёме</span>
+        </button>
+      ` : ""}
+
+      <button class="tile" data-page="history">
+        <strong>История</strong>
+        <span>Ежедневные анкеты и отдельные события</span>
+      </button>
     </div>
+
     <div class="notice">Можно пропускать любые вопросы. Не нужно подгонять ответы под ожидаемую картину — фиксируй то, что действительно было.</div>
+
     ${me.role === "admin" ? `<div class="notice">Режим администратора: доступен просмотр записей. Создавать или изменять записи Леры из этого аккаунта нельзя.</div>` : ""}
   `);
 }
@@ -254,6 +284,200 @@ function printWeeklyReport() {
   if (!w) { alert("Разреши всплывающее окно для формирования отчёта."); return; }
   w.document.open(); w.document.write(html); w.document.close();
 }
+
+function renderMedications() {
+  const medications = medicationsData.medications || [];
+  const logs = medicationsData.logs || [];
+
+  const statusNames = {
+    pending: "Ожидает отметки",
+    taken: "Принято",
+    skipped: "Пропущено"
+  };
+
+  shell(`
+    <div class="pagehead">
+      <h2>Лекарства</h2>
+      <p class="muted">
+        Настрой расписание. Бот будет присылать напоминания
+        в Telegram в указанное время.
+      </p>
+    </div>
+
+    <article class="panel">
+      <h3>Добавить лекарство</h3>
+
+      <form id="medForm">
+        <label class="field">
+          <span>Название препарата</span>
+          <input id="medName" maxlength="120"
+            placeholder="Название лекарства" required>
+        </label>
+
+        <label class="field">
+          <span>Инструкция (необязательно)</span>
+          <textarea id="medInstructions" maxlength="300"
+            rows="2" placeholder="Например, после еды"></textarea>
+        </label>
+
+        <label class="field">
+          <span>Время приёма</span>
+          <input id="medTimes"
+            placeholder="09:00, 21:00" required>
+          <small class="muted">
+            Если приёмов несколько, перечисли время через запятую.
+          </small>
+        </label>
+
+        <label class="field">
+          <span>Часовой пояс</span>
+          <select id="medTimezone">
+            <option value="Europe/Moscow">Москва</option>
+            <option value="Europe/Amsterdam">Амстердам</option>
+            <option value="Europe/Berlin">Берлин</option>
+            <option value="UTC">UTC</option>
+          </select>
+        </label>
+
+        <button class="primary full" type="submit">
+          Добавить расписание
+        </button>
+        <p id="medMessage" class="muted"></p>
+      </form>
+    </article>
+
+    <h3>Мои препараты</h3>
+
+    ${medications.length ? medications.map(m => `
+      <article class="panel">
+        <div class="medication-head">
+          <div>
+            <h3>${escapeHtml(m.name)}</h3>
+            <p class="muted">
+              ${escapeHtml(m.instructions || "Без дополнительных инструкций")}
+            </p>
+          </div>
+          <span class="role">${m.active ? "Активно" : "Отключено"}</span>
+        </div>
+
+        <p><b>Время:</b> ${m.times.map(escapeHtml).join(", ")}</p>
+        <p class="muted">Часовой пояс: ${escapeHtml(m.timezone)}</p>
+
+        <div class="medication-actions">
+          <button class="secondary"
+            data-med-toggle="${m.id}"
+            data-active="${m.active}">
+            ${m.active ? "Отключить" : "Включить"}
+          </button>
+
+          <button class="secondary"
+            data-med-delete="${m.id}">
+            Удалить
+          </button>
+        </div>
+      </article>
+    `).join("") : `
+      <div class="notice">
+        Пока нет добавленных лекарств.
+      </div>
+    `}
+
+    <h3>История напоминаний</h3>
+
+    ${logs.length ? logs.map(log => `
+      <article class="event">
+        <b>${statusNames[log.status] || "Неизвестно"}</b>
+        <p>${new Date(log.scheduled_for).toLocaleString("ru-RU")}</p>
+      </article>
+    `).join("") : `
+      <div class="notice">
+        История приёмов пока пуста.
+      </div>
+    `}
+
+    <div class="notice">
+      Расписание служит напоминанием и не заменяет назначения врача.
+      При изменении схемы приёма обновляй расписание вручную.
+    </div>
+  `);
+
+  document.querySelector("#medForm").addEventListener("submit", async event => {
+    event.preventDefault();
+
+    const button = event.currentTarget.querySelector("button[type=submit]");
+    const message = document.querySelector("#medMessage");
+
+    const times = document.querySelector("#medTimes").value
+      .split(",")
+      .map(value => value.trim())
+      .filter(Boolean);
+
+    const payload = {
+      name: document.querySelector("#medName").value.trim(),
+      instructions: document.querySelector("#medInstructions").value.trim(),
+      times,
+      timezone: document.querySelector("#medTimezone").value
+    };
+
+    button.disabled = true;
+    message.textContent = "Сохраняем…";
+
+    try {
+      await api("/api/medications", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+
+      await go("medications");
+    } catch (error) {
+      message.textContent = `Ошибка: ${error.message}`;
+      button.disabled = false;
+    }
+  });
+
+  app.querySelectorAll("[data-med-toggle]").forEach(button => {
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+
+      try {
+        await api("/api/medications", {
+          method: "PATCH",
+          body: JSON.stringify({
+            id: button.dataset.medToggle,
+            active: button.dataset.active !== "true"
+          })
+        });
+
+        await go("medications");
+      } catch (error) {
+        alert(`Не удалось изменить расписание: ${error.message}`);
+        button.disabled = false;
+      }
+    });
+  });
+
+  app.querySelectorAll("[data-med-delete]").forEach(button => {
+    button.addEventListener("click", async () => {
+      if (!confirm("Отключить это расписание?")) return;
+
+      button.disabled = true;
+
+      try {
+        await api("/api/medications", {
+          method: "DELETE",
+          body: JSON.stringify({ id: button.dataset.medDelete })
+        });
+
+        await go("medications");
+      } catch (error) {
+        alert(`Ошибка: ${error.message}`);
+        button.disabled = false;
+      }
+    });
+  });
+}
+
+
 async function start() {
   if (!tg?.initData) {
     app.innerHTML = `<div class="screen"><h2>Открой дневник через Telegram</h2><p>Авторизация доступна только внутри Telegram Mini App.</p></div>`;
