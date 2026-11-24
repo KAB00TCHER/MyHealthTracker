@@ -5,6 +5,20 @@ const app = document.querySelector("#app");
 let me = null;
 let page = "home";
 let daily = {};
+let dailyEntryDate = "";
+let dailyDirty = false;
+
+function suggestedDailyDate() {
+  const date = new Date();
+
+  // До 05:00 предлагаем заполнить отчёт за вчера.
+  if (date.getHours() < 5) {
+    date.setDate(date.getDate() - 1);
+  }
+
+  return localDate(date);
+}
+
 let historyData = { entries: [], events: [] };
 let events = [];
 let medicationsData = { medications: [], logs: [] };
@@ -109,9 +123,12 @@ async function go(nextPage) {
   page = nextPage;
   try {
     if (nextPage === "daily") {
-      const result = await api(`/api/daily?date=${localDate()}`);
-      daily = result.entry?.answers || {};
-      renderDaily();
+  dailyEntryDate = suggestedDailyDate();
+
+  const result = await api(`/api/daily?date=${dailyEntryDate}`);
+  daily = result.entry?.answers || {};
+  renderDaily();
+
     } else if (nextPage === "events") {
       const result = await api("/api/events");
       events = result.events || [];
@@ -182,31 +199,130 @@ function renderField([key,type,options]) {
   return `<label class="field"><span>${labels[key]}</span>${input}</label>`;
 }
 function renderDaily() {
+  const dateTitle = new Date(
+    `${dailyEntryDate}T12:00:00`
+  ).toLocaleDateString("ru-RU", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric"
+  });
+
+  dailyDirty = false;
+
   shell(`
-    <div class="pagehead"><h2>Ежедневная анкета</h2><p class="muted">Запись за ${new Date().toLocaleDateString("ru-RU")}. Оценки 0–10 — субъективные, где 0 означает отсутствие/минимальную выраженность, а 10 — максимальную.</p></div>
-    ${sections.map(section => `<article class="panel"><h3>${section.title}</h3>${section.items.map(renderField).join("")}</article>`).join("")}
-    <button class="primary full" id="saveDaily">Сохранить запись</button><p id="saveMessage" class="muted"></p>
+    <div class="pagehead">
+      <h2>Ежедневная анкета</h2>
+      <p class="muted">
+        Отчёт за ${dateTitle}.
+        Оценки 0–10 — субъективные, где 0 означает отсутствие
+        или минимальную выраженность, а 10 — максимальную.
+      </p>
+    </div>
+
+    <article class="panel">
+      <label class="field">
+        <span>За какой день заполняем отчёт?</span>
+        <input
+          id="dailyDate"
+          type="date"
+          value="${dailyEntryDate}"
+          max="${localDate()}"
+        >
+        <small class="muted">
+          Можно выбрать предыдущую дату, если заполняешь анкету позже.
+        </small>
+      </label>
+    </article>
+
+    ${sections.map(section => `
+      <article class="panel">
+        <h3>${section.title}</h3>
+        ${section.items.map(renderField).join("")}
+      </article>
+    `).join("")}
+
+    <button class="primary full" id="saveDaily">
+      Сохранить запись
+    </button>
+    <p id="saveMessage" class="muted"></p>
   `);
+
+  // Выбор даты отчёта.
+  document.querySelector("#dailyDate").addEventListener("change", async event => {
+    const newDate = event.target.value;
+
+    if (!newDate || newDate === dailyEntryDate) return;
+
+    if (dailyDirty && !confirm(
+      "Есть несохранённые ответы. При смене даты они будут потеряны. Продолжить?"
+    )) {
+      renderDaily();
+      return;
+    }
+
+    dailyEntryDate = newDate;
+    dailyDirty = false;
+
+    try {
+      const result = await api(`/api/daily?date=${dailyEntryDate}`);
+      daily = result.entry?.answers || {};
+      renderDaily();
+    } catch (error) {
+      document.querySelector("#saveMessage").textContent =
+        `Не удалось загрузить запись: ${error.message}`;
+    }
+  });
+
+  // Изменение ответов.
   app.querySelectorAll("[data-key]").forEach(element => {
     const update = () => {
-      daily[element.dataset.key] = element.type === "range" ? Number(element.value) : element.value;
-      const output = app.querySelector(`[data-value="${element.dataset.key}"]`);
-      if (output) output.textContent = `${element.value}/10`;
+      daily[element.dataset.key] =
+        element.type === "range"
+          ? Number(element.value)
+          : element.value;
+
+      dailyDirty = true;
+
+      const output = app.querySelector(
+        `[data-value="${element.dataset.key}"]`
+      );
+
+      if (output) {
+        output.textContent = `${element.value}/10`;
+      }
     };
+
     element.addEventListener("input", update);
     element.addEventListener("change", update);
   });
+
+  // Сохранение отчёта именно за выбранную дату.
   document.querySelector("#saveDaily").addEventListener("click", async event => {
     const button = event.currentTarget;
     const message = document.querySelector("#saveMessage");
+
     button.disabled = true;
     message.textContent = "Сохраняем…";
+
     try {
-      await api("/api/daily", { method:"POST", body:JSON.stringify({date:localDate(),answers:daily}) });
-      message.textContent = "Запись сохранена. Её можно изменить до конца дня и позже.";
+      await api("/api/daily", {
+        method: "POST",
+        body: JSON.stringify({
+          date: dailyEntryDate,
+          answers: daily
+        })
+      });
+
+      dailyDirty = false;
+      message.textContent =
+        `Запись за ${dateTitle} сохранена. Её можно изменить позже.`;
     } catch (error) {
-      message.textContent = `Не удалось сохранить: ${error.message}`;
-    } finally { button.disabled = false; }
+      message.textContent =
+        `Не удалось сохранить: ${error.message}`;
+    } finally {
+      button.disabled = false;
+    }
   });
 }
 function renderEvents() {
